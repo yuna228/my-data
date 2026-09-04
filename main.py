@@ -11,8 +11,8 @@ st.set_page_config(
 
 st.title("🌡️ 서울의 100년간 연평균 기온 변화")
 st.write(
-    "서울의 일별 기온 데이터를 이용하여 연평균 기온의 변화를 살펴보고, "
-    "원본 데이터의 요약통계를 확인합니다."
+    "서울의 일별 기온 데이터를 이용하여 연평균 기온의 변화를 살펴봅니다. "
+    "값이 비어 있는 연도와 유난히 낮은 연도도 함께 표시합니다."
 )
 
 # 데이터 주소
@@ -24,10 +24,10 @@ DATA_URL = "https://raw.githubusercontent.com/greatsong/modudata/main/data/seoul
 def load_data():
     df = pd.read_csv(DATA_URL, encoding="utf-8-sig")
 
-    # 날짜를 날짜 형식으로 변환
+    # 날짜 변환
     df["날짜"] = pd.to_datetime(df["날짜"])
 
-    # 기온 열을 숫자형으로 변환
+    # 기온 열 숫자형 변환
     for column in ["평균기온", "최저기온", "최고기온"]:
         df[column] = pd.to_numeric(df[column], errors="coerce")
 
@@ -51,20 +51,26 @@ try:
         st.metric("전체 데이터 개수", f"{len(df):,}개")
 
     with col2:
-        st.metric("데이터 시작일", df["날짜"].min().strftime("%Y-%m-%d"))
+        st.metric(
+            "데이터 시작일",
+            df["날짜"].min().strftime("%Y-%m-%d")
+        )
 
     with col3:
-        st.metric("데이터 종료일", df["날짜"].max().strftime("%Y-%m-%d"))
+        st.metric(
+            "데이터 종료일",
+            df["날짜"].max().strftime("%Y-%m-%d")
+        )
 
     # --------------------------------------------------
-    # 2. 요약통계
+    # 2. 원본 데이터 요약통계
     # --------------------------------------------------
     st.subheader("📊 원본 데이터 요약통계")
 
-    # 기온 데이터의 요약통계
-    summary = df[["평균기온", "최저기온", "최고기온"]].describe().T
+    summary = df[
+        ["평균기온", "최저기온", "최고기온"]
+    ].describe().T
 
-    # 보기 좋은 한글 열 이름으로 변경
     summary = summary.rename(
         columns={
             "count": "개수",
@@ -78,11 +84,13 @@ try:
         }
     )
 
-    # 소수점 표시
     summary = summary.round(2)
 
-    # 행 이름 한글화
-    summary.index = ["평균기온", "최저기온", "최고기온"]
+    summary.index = [
+        "평균기온",
+        "최저기온",
+        "최고기온"
+    ]
 
     st.dataframe(
         summary,
@@ -114,82 +122,221 @@ try:
         df.dropna(subset=["평균기온"])
         .groupby("연도")["평균기온"]
         .mean()
-        .reset_index()
     )
 
-    # 100년간 데이터 선택
+    # 분석할 100년
     start_year = 1908
     end_year = start_year + 99
 
-    yearly_temp = yearly_temp[
-        (yearly_temp["연도"] >= start_year) &
-        (yearly_temp["연도"] <= end_year)
-    ]
+    # 100년 전체 연도를 먼저 만든 뒤 데이터 연결
+    # → 값이 없는 연도도 그래프에 나타나도록 함
+    all_years = pd.Index(
+        range(start_year, end_year + 1),
+        name="연도"
+    )
+
+    yearly_temp = yearly_temp.reindex(all_years)
 
     # --------------------------------------------------
-    # 5. 100년간 연평균 기온 그래프
+    # 5. 유난히 낮은 연도 판별
+    # --------------------------------------------------
+    valid_temps = yearly_temp.dropna()
+
+    mean_temp = valid_temps.mean()
+    std_temp = valid_temps.std()
+
+    # 평균보다 2표준편차 이상 낮은 연도
+    low_threshold = mean_temp - (2 * std_temp)
+
+    low_years = yearly_temp[
+        yearly_temp < low_threshold
+    ].dropna()
+
+    # 값이 없는 연도
+    missing_years = yearly_temp[
+        yearly_temp.isna()
+    ].index.tolist()
+
+    # --------------------------------------------------
+    # 6. 100년간 연평균 기온 그래프
     # --------------------------------------------------
     st.subheader(
         f"📈 {start_year}년~{end_year}년 서울 연평균 기온 변화"
     )
 
-    fig, ax = plt.subplots(figsize=(12, 5))
+    fig, ax = plt.subplots(figsize=(13, 6))
 
+    # 일반 연도 선 그래프
     ax.plot(
-        yearly_temp["연도"],
-        yearly_temp["평균기온"],
-        linewidth=2
+        yearly_temp.index,
+        yearly_temp.values,
+        linewidth=2,
+        marker="o",
+        markersize=3,
+        label="연평균 기온"
+    )
+
+    # 유난히 낮은 연도 강조
+    if len(low_years) > 0:
+        ax.scatter(
+            low_years.index,
+            low_years.values,
+            s=80,
+            color="red",
+            zorder=5,
+            label="유난히 낮은 연도"
+        )
+
+        # 낮은 연도에 연도 표시
+        for year, temp in low_years.items():
+            ax.annotate(
+                f"{year}\n{temp:.1f}℃",
+                xy=(year, temp),
+                xytext=(0, -30),
+                textcoords="offset points",
+                ha="center",
+                fontsize=9,
+                color="red",
+                fontweight="bold"
+            )
+
+    # 값이 없는 연도 강조
+    if missing_years:
+        ax.scatter(
+            missing_years,
+            [mean_temp] * len(missing_years),
+            marker="X",
+            s=100,
+            color="red",
+            zorder=6,
+            label="값이 없는 연도"
+        )
+
+        # 결측 연도 표시
+        for year in missing_years:
+            ax.annotate(
+                f"{year}\n값 없음",
+                xy=(year, mean_temp),
+                xytext=(0, 25),
+                textcoords="offset points",
+                ha="center",
+                fontsize=9,
+                color="red",
+                fontweight="bold"
+            )
+
+    # 이상치 기준선
+    ax.axhline(
+        low_threshold,
+        linestyle="--",
+        linewidth=1.5,
+        label=f"낮은 기온 기준 ({low_threshold:.1f}℃)"
     )
 
     ax.set_title(
         "서울 연평균 기온 변화",
         fontsize=18
     )
+
     ax.set_xlabel("연도")
     ax.set_ylabel("연평균 기온 (℃)")
 
-    ax.grid(True, alpha=0.3)
-
-    # 10년 단위로 x축 표시
     ax.set_xticks(
         range(start_year, end_year + 1, 10)
     )
+
+    ax.grid(True, alpha=0.3)
+
+    ax.legend()
 
     plt.tight_layout()
 
     st.pyplot(fig)
 
     # --------------------------------------------------
-    # 6. 100년간 변화 요약
+    # 7. 이상 데이터 요약
+    # --------------------------------------------------
+    st.subheader("⚠️ 이상 구간 확인")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("### 🔴 값이 없는 연도")
+
+        if missing_years:
+            st.write(
+                f"총 **{len(missing_years)}개 연도**에서 "
+                "연평균 기온을 계산할 수 없습니다."
+            )
+
+            st.write(
+                ", ".join(map(str, missing_years))
+            )
+        else:
+            st.success("값이 없는 연도가 없습니다.")
+
+    with col2:
+        st.markdown("### 🔻 유난히 낮은 연도")
+
+        if len(low_years) > 0:
+            st.write(
+                f"기준: **{low_threshold:.1f}℃ 미만**"
+            )
+
+            low_table = low_years.reset_index()
+            low_table.columns = ["연도", "연평균 기온"]
+            low_table["연평균 기온"] = (
+                low_table["연평균 기온"].round(2)
+            )
+
+            st.dataframe(
+                low_table,
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.success(
+                "통계적으로 유난히 낮은 연도가 없습니다."
+            )
+
+    # --------------------------------------------------
+    # 8. 100년간 변화 요약
     # --------------------------------------------------
     st.subheader("🌡️ 100년간 기온 변화 요약")
 
-    first_temp = yearly_temp.iloc[0]["평균기온"]
-    last_temp = yearly_temp.iloc[-1]["평균기온"]
-    change = last_temp - first_temp
+    valid_yearly_temp = yearly_temp.dropna()
 
-    col1, col2, col3 = st.columns(3)
+    if len(valid_yearly_temp) >= 2:
+        first_year = valid_yearly_temp.index[0]
+        last_year = valid_yearly_temp.index[-1]
 
-    with col1:
-        st.metric(
-            "첫해 연평균 기온",
-            f"{first_temp:.1f} ℃"
-        )
+        first_temp = valid_yearly_temp.iloc[0]
+        last_temp = valid_yearly_temp.iloc[-1]
+        change = last_temp - first_temp
 
-    with col2:
-        st.metric(
-            "마지막해 연평균 기온",
-            f"{last_temp:.1f} ℃"
-        )
+        col1, col2, col3 = st.columns(3)
 
-    with col3:
-        st.metric(
-            "첫해 대비 변화",
-            f"{change:+.1f} ℃"
-        )
+        with col1:
+            st.metric(
+                f"{first_year}년 연평균 기온",
+                f"{first_temp:.1f} ℃"
+            )
+
+        with col2:
+            st.metric(
+                f"{last_year}년 연평균 기온",
+                f"{last_temp:.1f} ℃"
+            )
+
+        with col3:
+            st.metric(
+                "첫해 대비 변화",
+                f"{change:+.1f} ℃"
+            )
 
     st.caption(
-        "※ 연평균 기온은 해당 연도의 일별 평균기온을 산술평균하여 계산했습니다."
+        "※ 유난히 낮은 연도는 100년간 연평균 기온의 평균에서 "
+        "2표준편차 이상 낮은 연도로 판단했습니다."
     )
 
 
