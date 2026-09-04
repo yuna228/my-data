@@ -11,8 +11,8 @@ st.set_page_config(
 
 st.title("🌡️ 서울의 100년간 연평균 기온 변화")
 st.write(
-    "서울의 일별 기온 데이터를 이용하여 연평균 기온의 변화를 살펴봅니다. "
-    "값이 비어 있는 연도와 유난히 낮은 연도도 함께 표시합니다."
+    "서울의 일별 기온 데이터를 이용하여 연평균 기온의 변화를 살펴보고, "
+    "원본 데이터의 요약통계와 이상 데이터를 확인합니다."
 )
 
 # 데이터 주소
@@ -22,10 +22,17 @@ DATA_URL = "https://raw.githubusercontent.com/greatsong/modudata/main/data/seoul
 # 데이터 불러오기
 @st.cache_data
 def load_data():
-    df = pd.read_csv(DATA_URL, encoding="utf-8-sig")
+    # 한글이 깨지는 경우를 대비하여 인코딩 자동 처리
+    try:
+        df = pd.read_csv(DATA_URL, encoding="utf-8-sig")
+    except UnicodeDecodeError:
+        df = pd.read_csv(DATA_URL, encoding="cp949")
+
+    # 열 이름에 혹시 공백이 있으면 제거
+    df.columns = df.columns.str.strip()
 
     # 날짜 변환
-    df["날짜"] = pd.to_datetime(df["날짜"])
+    df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce")
 
     # 기온 열 숫자형 변환
     for column in ["평균기온", "최저기온", "최고기온"]:
@@ -67,10 +74,12 @@ try:
     # --------------------------------------------------
     st.subheader("📊 원본 데이터 요약통계")
 
+    # 기온별 통계 계산
     summary = df[
         ["평균기온", "최저기온", "최고기온"]
     ].describe().T
 
+    # 통계 항목을 한글로 변경
     summary = summary.rename(
         columns={
             "count": "개수",
@@ -84,13 +93,12 @@ try:
         }
     )
 
-    summary = summary.round(2)
+    # 행과 열 바꾸기
+    # 기존: 평균기온 / 최저기온 / 최고기온 → 행
+    # 변경: 개수 / 평균 / 최소값 ... → 행
+    summary = summary.T
 
-    summary.index = [
-        "평균기온",
-        "최저기온",
-        "최고기온"
-    ]
+    summary = summary.round(2)
 
     st.dataframe(
         summary,
@@ -106,7 +114,10 @@ try:
     # --------------------------------------------------
     st.subheader("🔎 열별 결측값")
 
-    missing = df.isnull().sum().reset_index()
+    missing = df[
+        ["날짜", "지점", "평균기온", "최저기온", "최고기온"]
+    ].isnull().sum().reset_index()
+
     missing.columns = ["열 이름", "결측값 개수"]
 
     st.dataframe(
@@ -116,7 +127,7 @@ try:
     )
 
     # --------------------------------------------------
-    # 4. 연평균 기온 계산
+    # 4. 연도별 연평균 기온 계산
     # --------------------------------------------------
     yearly_temp = (
         df.dropna(subset=["평균기온"])
@@ -128,8 +139,8 @@ try:
     start_year = 1908
     end_year = start_year + 99
 
-    # 100년 전체 연도를 먼저 만든 뒤 데이터 연결
-    # → 값이 없는 연도도 그래프에 나타나도록 함
+    # 모든 연도를 먼저 만든 뒤 데이터 연결
+    # → 값이 없는 연도도 그래프에 표시 가능
     all_years = pd.Index(
         range(start_year, end_year + 1),
         name="연도"
@@ -166,7 +177,7 @@ try:
 
     fig, ax = plt.subplots(figsize=(13, 6))
 
-    # 일반 연도 선 그래프
+    # 기본 연평균 기온
     ax.plot(
         yearly_temp.index,
         yearly_temp.values,
@@ -181,18 +192,17 @@ try:
         ax.scatter(
             low_years.index,
             low_years.values,
-            s=80,
+            s=100,
             color="red",
             zorder=5,
             label="유난히 낮은 연도"
         )
 
-        # 낮은 연도에 연도 표시
         for year, temp in low_years.items():
             ax.annotate(
                 f"{year}\n{temp:.1f}℃",
                 xy=(year, temp),
-                xytext=(0, -30),
+                xytext=(0, -35),
                 textcoords="offset points",
                 ha="center",
                 fontsize=9,
@@ -206,18 +216,17 @@ try:
             missing_years,
             [mean_temp] * len(missing_years),
             marker="X",
-            s=100,
+            s=120,
             color="red",
             zorder=6,
             label="값이 없는 연도"
         )
 
-        # 결측 연도 표시
         for year in missing_years:
             ax.annotate(
                 f"{year}\n값 없음",
                 xy=(year, mean_temp),
-                xytext=(0, 25),
+                xytext=(0, 30),
                 textcoords="offset points",
                 ha="center",
                 fontsize=9,
@@ -225,7 +234,7 @@ try:
                 fontweight="bold"
             )
 
-    # 이상치 기준선
+    # 낮은 기온 기준선
     ax.axhline(
         low_threshold,
         linestyle="--",
@@ -246,7 +255,6 @@ try:
     )
 
     ax.grid(True, alpha=0.3)
-
     ax.legend()
 
     plt.tight_layout()
@@ -256,7 +264,7 @@ try:
     # --------------------------------------------------
     # 7. 이상 데이터 요약
     # --------------------------------------------------
-    st.subheader("⚠️ 이상 구간 확인")
+    st.subheader("⚠️ 이상 데이터 확인")
 
     col1, col2 = st.columns(2)
 
@@ -280,11 +288,12 @@ try:
 
         if len(low_years) > 0:
             st.write(
-                f"기준: **{low_threshold:.1f}℃ 미만**"
+                f"판정 기준: **{low_threshold:.1f}℃ 미만**"
             )
 
             low_table = low_years.reset_index()
             low_table.columns = ["연도", "연평균 기온"]
+
             low_table["연평균 기온"] = (
                 low_table["연평균 기온"].round(2)
             )
